@@ -1,0 +1,89 @@
+import streamlit as st
+import pandas as pd
+import yfinance as yf
+import requests
+from datetime import datetime
+import plotly.express as px
+
+# --- CONFIGURACIÓN ---
+st.set_page_config(page_title="Statera Pro", page_icon="🛡️", layout="wide")
+
+# --- ESTADO DE LA APP (Base de Datos en Sesión) ---
+if 'cartera' not in st.session_state:
+    st.session_state.cartera = {
+        "MSCI World": 1.56, "Small Cap": 0.85, "Nasdaq-100": 0.42,
+        "Shopify": 1.85, "Iren Ltd": 12.0, "Coca-Cola": 3.0, "Solana": 4.5
+    }
+if 'historial' not in st.session_state:
+    st.session_state.historial = []
+
+# --- BARRA LATERAL ---
+with st.sidebar:
+    st.title("🛡️ Statera Settings")
+    modo_privado = st.toggle("🔒 Modo Privacidad", value=False)
+    st.divider()
+    apy_staking = st.slider("Rendimiento Staking (%)", 0.0, 15.0, 4.7)
+    st.caption("Ajusta el APY según las recompensas actuales.")
+
+# --- OBTENCIÓN DE DATOS ---
+@st.cache_data(ttl=600)
+def obtener_mercado():
+    precios = {}
+    tickers = {"MSCI World": "IWDA.AS", "Small Cap": "IUSN.DE", "Nasdaq-100": "SXRV.DE", "Shopify": "SHOP", "Iren Ltd": "IREN", "Coca-Cola": "KO"}
+    for k, v in tickers.items():
+        try: precios[k] = yf.Ticker(v).fast_info['last_price']
+        except: precios[k] = 1.0
+    try:
+        url = "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=eur"
+        precios["Solana"] = requests.get(url).json()['solana']['eur']
+    except: precios["Solana"] = 95.0
+    return precios
+
+precios = obtener_mercado()
+
+# --- CÁLCULOS ---
+valor_total = sum(st.session_state.cartera[k] * precios.get(k, 0) for k in st.session_state.cartera)
+cosecha_diaria = (st.session_state.cartera["Solana"] * precios["Solana"] * (apy_staking/100)) / 365
+
+# --- LAYOUT PRINCIPAL ---
+t_display = "●●●● €" if modo_privado else f"{valor_total:,.2f} €"
+st.metric("Patrimonio Total Actualizado", t_display)
+
+tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "🚀 Inversión (Trigger)", "📜 Historial"])
+
+with tab1:
+    col_a, col_b = st.columns([1, 1])
+    
+    with col_a:
+        st.subheader("Distribución de Cartera")
+        df_pie = pd.DataFrame({
+            "Activo": st.session_state.cartera.keys(),
+            "Valor": [v * precios.get(k, 0) for k, v in st.session_state.cartera.items()]
+        })
+        fig = px.pie(df_pie, values='Valor', names='Activo', hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
+        st.plotly_chart(fig, use_container_width=True)
+
+    with col_b:
+        st.subheader("🌾 Generador de Pasivos")
+        st.info(f"Tu staking genera aproximadamente **{cosecha_diaria:.4f} €** al día.")
+        st.write(f"Proyección mensual: **{cosecha_diaria * 30:.2f} €**")
+        st.progress(min((cosecha_diaria * 30) / 100, 1.0), text="Progreso hacia objetivo 100€/mes")
+
+with tab2:
+    st.subheader("Ejecutar Trigger Quincenal")
+    st.write("Se repartirán **63,00 €** según tu estrategia (ETF 35€ / Stock 18€ / Crypto 10€).")
+    
+    if st.button("Confirmar Inversión 63€"):
+        reparto = {"MSCI World": 20.0, "Small Cap": 8.0, "Nasdaq-100": 7.0, "Iren Ltd": 10.0, "Coca-Cola": 8.0, "Solana": 10.0}
+        for activo, monto in reparto.items():
+            st.session_state.cartera[activo] += monto / precios[activo]
+        
+        st.session_state.historial.append({"Fecha": datetime.now().strftime("%d/%m/%Y %H:%M"), "Monto": "63.00 €", "Estado": "Completado"})
+        st.success("¡Operación ejecutada con éxito!")
+
+with tab3:
+    st.subheader("Historial de Operaciones")
+    if st.session_state.historial:
+        st.table(pd.DataFrame(st.session_state.historial))
+    else:
+        st.write("Aún no hay movimientos registrados.")
